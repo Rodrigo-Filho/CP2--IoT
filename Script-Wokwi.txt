@@ -1,0 +1,96 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHTesp.h"
+#include <LiquidCrystal_I2C.h>
+
+#define I2C_ADDR    0x27
+#define LCD_COLUMNS 16
+#define LCD_LINES   2
+#define DHT_PIN 15
+
+// Atualize essas variáveis com as configurações corretas da sua rede WiFi e broker MQTT
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+const char* mqtt_server = "test.mosquitto.org";
+
+DHTesp dhtSensor;
+LiquidCrystal_I2C lcd(I2C_ADDR, LCD_COLUMNS, LCD_LINES);
+
+WiFiClient Wokwi_Client;
+PubSubClient client(Wokwi_Client);
+
+#define MSG_BUFFER_SIZE 50  // Definindo o tamanho do buffer para as mensagens
+char msg[MSG_BUFFER_SIZE];  // Buffer para armazenar mensagens
+
+// Função para conectar ao WiFi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando a ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);  // Corrigido WiFi com maiúsculas
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado");
+  Serial.println("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Função para reconectar ao broker MQTT
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Tentando conexão MQTT...");
+
+    if (client.connect("Wokwi_Client")) {
+      Serial.println("conectado");
+    } else {
+      Serial.print("falhou, rc=");
+      Serial.print(client.state());
+      Serial.println(" tentando novamente em 5 segundos");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Inicializando WiFi, MQTT e LCD
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+
+  dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+  lcd.init();
+  lcd.backlight();
+}
+
+void loop() {
+  reconnect();  // Garante a reconexão ao MQTT
+
+  // Leitura de temperatura e umidade
+  TempAndHumidity data = dhtSensor.getTempAndHumidity();
+  Serial.println(String(data.temperature, 1));
+  Serial.println(String(data.humidity, 1));
+  Serial.println("---");
+  
+  // Atualizando o display LCD
+  lcd.setCursor(0, 0);
+  lcd.print("  Temp: " + String(data.temperature, 1) + "\xDF" + "C  ");
+  lcd.setCursor(0, 1);
+  lcd.print(" Humidity: " + String(data.humidity, 1) + "% ");
+
+  // Publicando dados no broker MQTT
+  snprintf(msg, MSG_BUFFER_SIZE, "%.2f", data.temperature);
+  client.publish("esp32/temperatura", msg);
+  snprintf(msg, MSG_BUFFER_SIZE, "%.2f", data.humidity);
+  client.publish("esp32/umidade", msg);
+
+  delay(2000);  // Delay para próxima leitura e publicação
+}
